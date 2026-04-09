@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import type { BrainEngine } from './engine.ts';
+import { runMigrations } from './migrate.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput,
@@ -60,6 +61,12 @@ export class PostgresEngine implements BrainEngine {
     const schemaPath = join(dirname(new URL(import.meta.url).pathname), '..', 'schema.sql');
     const schemaSql = readFileSync(schemaPath, 'utf-8');
     await conn.unsafe(schemaSql);
+
+    // Run any pending migrations automatically
+    const { applied } = await runMigrations(this);
+    if (applied > 0) {
+      console.log(`  ${applied} migration(s) applied`);
+    }
   }
 
   async transaction<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
