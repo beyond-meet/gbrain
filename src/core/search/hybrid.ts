@@ -10,6 +10,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { MAX_SEARCH_LIMIT, clampSearchLimit } from '../engine.ts';
 import type { SearchResult, SearchOpts } from '../types.ts';
 import { embed } from '../embedding.ts';
 import { dedupResults } from './dedup.ts';
@@ -29,22 +30,26 @@ export async function hybridSearch(
   opts?: HybridSearchOpts,
 ): Promise<SearchResult[]> {
   const limit = opts?.limit || 20;
-  const searchOpts: SearchOpts = { limit: limit * 2, detail: opts?.detail };
+  const offset = opts?.offset || 0;
+  const innerLimit = Math.min(limit * 2, MAX_SEARCH_LIMIT);
+  const searchOpts: SearchOpts = { limit: innerLimit, detail: opts?.detail };
 
   // Run keyword search (always available, no API key needed)
   const keywordResults = await engine.searchKeyword(query, searchOpts);
 
   // Skip vector search entirely if no OpenAI key is configured
   if (!process.env.OPENAI_API_KEY) {
-    return dedupResults(keywordResults).slice(0, limit);
+    return dedupResults(keywordResults).slice(offset, offset + limit);
   }
 
   // Determine query variants (optionally with expansion)
+  // expandQuery already includes the original query in its return value,
+  // so we use it directly instead of prepending query again
   let queries = [query];
   if (opts?.expansion && opts?.expandFn) {
     try {
-      const expanded = await opts.expandFn(query);
-      queries = [query, ...expanded].slice(0, 3);
+      queries = await opts.expandFn(query);
+      if (queries.length === 0) queries = [query];
     } catch {
       // Expansion failure is non-fatal
     }
@@ -64,7 +69,7 @@ export async function hybridSearch(
   }
 
   if (vectorLists.length === 0) {
-    return dedupResults(keywordResults).slice(0, limit);
+    return dedupResults(keywordResults).slice(offset, offset + limit);
   }
 
   // Merge all result lists via RRF (includes normalization + boost)
@@ -84,7 +89,7 @@ export async function hybridSearch(
     return hybridSearch(engine, query, { ...opts, detail: 'high' });
   }
 
-  return deduped.slice(0, limit);
+  return deduped.slice(offset, offset + limit);
 }
 
 /**

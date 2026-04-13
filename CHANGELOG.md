@@ -2,25 +2,140 @@
 
 All notable changes to GBrain will be documented in this file.
 
-## [0.8.1] - 2026-04-11
+## [0.9.3] - 2026-04-12
 
 ### Added
 
-- **Search now knows what matters.** Compiled truth (your distilled assessments above the `---`) now ranks 2x higher than timeline entries in hybrid search. Query "what does Variant do?" and you get the assessment, not a meeting note from March. The boost is applied after RRF normalization so it plays fair with the rest of the ranking pipeline.
-- **Control how deep search goes.** New `--detail` flag on `gbrain query`: `low` returns only compiled truth, `medium` (default) returns everything with dedup, `high` returns all chunks uncapped. MCP picks it up automatically. Auto-escalates from low to high if no results found.
-- **Cosine re-scoring for query-specific ranking.** After RRF fusion, chunks are re-scored against the actual query embedding. Two questions about the same page now surface different sections. "AI security" gets the security content, "when did we last meet" gets the timeline.
-- **Source-aware dedup.** The dedup pipeline now guarantees at least one compiled truth chunk per page in results, even if timeline chunks scored higher on keyword match.
-- **Search debug mode.** Set `GBRAIN_SEARCH_DEBUG=1` to see intermediate scores (RRF raw, normalized, boosted, cosine, blended) for every result. Useful for tuning.
+- **Health checks speak a typed language now.** Recipe `health_checks` use a typed DSL (`http`, `env_exists`, `command`, `any_of`) instead of raw shell strings. No more `execSync(untrustedYAML)`. Your agent runs `gbrain integrations doctor` and gets structured results, not shell injection risk. All 7 first-party recipes migrated. String health checks still work (with deprecation warning) for backward compat.
+
+### Fixed
+
+- **Your storage backend can't be tricked into reading `/etc/passwd`.** `LocalStorage` now validates every path stays within the storage root. `../../etc/passwd` gets "Path traversal blocked" instead of your system files. All 6 methods covered (upload, download, delete, exists, list, getUrl).
+- **MCP callers can't read arbitrary files via `file_url`.** `resolveFile()` now validates the requested path stays within the brain root before touching the filesystem. Previously, `../../etc/passwd` would read any file the process could access.
+- **`.supabase` marker files can't escape their scope.** Marker prefix validation now rejects `../`, absolute paths, and bare `..`. A crafted `.supabase` file in a shared brain repo can't make storage requests outside the intended prefix.
+- **File queries can't blow up memory.** The slug-filtered `file_list` MCP operation now has the same `LIMIT 100` as the unfiltered branch. Also fixed the CLI `gbrain files list` and `gbrain files verify` commands.
+- **Symlinks in brain directories can't exfiltrate files.** All 4 file walkers in `files.ts` plus the `init.ts` size counter now use `lstatSync` and skip symlinks. Broken symlinks and `node_modules` directories are also skipped.
+- **Recipe health checks can't inject shell commands.** Non-embedded (user-created) recipes with shell metacharacters in health_check strings are blocked. First-party recipes are trusted but migrated to the typed DSL.
+
+## [0.9.2] - 2026-04-12
+
+### Fixed
+
+- **Fresh local installs initialize cleanly again.** `gbrain init` now creates the local PGLite data directory before taking its advisory lock, so first-run setup no longer misreports a missing directory as a lock timeout.
+
+## [0.9.1] - 2026-04-11
+
+### Fixed
+
+- **Your brain can't be poisoned by rogue frontmatter anymore.** Slug authority is now path-derived. A file at `notes/random.md` can't declare `slug: people/admin` and silently overwrite someone else's page. Mismatches are rejected with a clear error telling you exactly what to fix.
+- **Symlinks in your notes directory can't exfiltrate files.** The import walker now uses `lstatSync` and refuses to follow symlinks, blocking the attack where a contributor plants a link to `~/.zshrc` in the brain directory. Defense-in-depth: `importFromFile` itself also checks.
+- **Giant payloads through MCP can't rack up your OpenAI bill.** `importFromContent` now checks `Buffer.byteLength` before any processing. 10 MB of emoji through `put_page`? Rejected before chunking starts.
+- **Search can't be weaponized into a DoS.** `limit` is clamped to 100 across all search paths (keyword, vector, hybrid). `statement_timeout: 8s` on the Postgres connection as defense-in-depth. Requesting `limit: 10000000` now gets you 100 results and a warning.
+- **PGLite stops crashing when two processes touch the same brain.** File-based advisory lock using atomic `mkdir` with PID tracking and 5-minute stale detection. Clear error messages tell you which process holds the lock and how to recover.
+- **12 data integrity fixes landed.** Orphan chunks cleaned up on empty pages. Write operations (`addLink`, `addTag`, `addTimelineEntry`, `putRawData`, `createVersion`) now throw when the target page doesn't exist instead of silently no-opping. Health metrics (`stale_pages`, `dead_links`, `orphan_pages`) now measure real problems instead of always returning 0. Keyword search moved from JS-side sort-and-splice to a SQL CTE with `LIMIT`. MCP server validates params before dispatch.
+- **Stale embeddings can't lie to you anymore.** When chunk text changes but embedding fails, the old vector is now NULL'd out instead of preserved. Previously, search could return results based on outdated vectors attached to new text.
+- **Embedding failures are no longer silent.** The `catch { /* non-fatal */ }` is gone. You now get `[gbrain] embedding failed for slug (N chunks): error message` in stderr. Still non-fatal, but you know what happened.
+- **O(n^2) chunk lookup in `embedPage` is gone.** Replaced `find() + indexOf()` with a single `Map` lookup. Matches the pattern `embedAll` already uses.
+- **Stdin bombs blocked.** `parseOpArgs` now caps stdin at 5 MB before the full buffer is consumed.
+
+### Added
+
+- **`gbrain embed --all` is 30x faster.** Sliding worker pool with 20 concurrent workers (tunable via `GBRAIN_EMBED_CONCURRENCY`). A 20,000-chunk corpus that took 2.5 hours now finishes in ~8 minutes.
+- **Search pagination.** Both `search` and `query` now accept `--offset` for paginating through results. Combined with the 100-result ceiling, you can now page through large result sets.
+- **`gbrain ask` is an alias for `gbrain query`.** CLI-only, doesn't appear in MCP tools-json.
+- **Content hash now covers all page fields.** Title, type, and frontmatter changes trigger re-import. First sync after upgrade will re-import all pages (one-time, expected).
+- **Migration file for v0.9.1.** Auto-update agent knows to expect the full re-import and will run `gbrain embed --all` afterward.
+- **`pgcrypto` extension added to schema.** Fallback for `gen_random_uuid()` on Postgres < 13.
 
 ### Changed
 
-- **Keyword search returns chunks, not pages.** Removed `DISTINCT ON (p.slug)` from keyword search. Previously returned only 1 chunk per page. Now returns multiple chunks per page, properly handled by the dedup pipeline. The bare `search` operation also now runs through dedup.
-- **RRF dedup key uses chunk IDs.** Changed from text-prefix matching (`slug:text50`) to `slug:chunk_id` with text-prefix fallback. Eliminates silent chunk loss when two chunks share the same opening text.
-- **SearchResult now includes chunk_id and chunk_index.** Both engines return these fields from all search queries. Enables re-scoring and better dedup.
+- **Search type and exclude_slugs filters now work.** These were advertised in the API but never implemented. Both `searchKeyword` and `searchVector` now respect `type` and `exclude_slugs` params.
+- **Hybrid search no longer double-embeds the query.** `expandQuery` already includes the original, so we use it directly instead of prepending.
 
-### Credits
+## [0.9.0] - 2026-04-11
 
-Inspired by [Ramp Labs' "Latent Briefing" paper](https://ramp.com) (April 2026). Their research on KV cache compaction for multi-agent memory sharing directly informed the compiled truth boosting, variable detail levels, and query-specific re-scoring.
+### Added
+
+- **Large files don't bloat your git repo anymore.** `gbrain files upload-raw`
+  auto-routes by size: text and PDFs under 100 MB stay in git, everything larger
+  (or any media file) goes to Supabase Storage with a `.redirect.yaml` pointer
+  left in the repo. Files over 100 MB use TUS resumable upload (6 MB chunks with
+  retry and backoff) so a flaky connection doesn't lose a 2 GB video upload.
+  `gbrain files signed-url` generates 1-hour access links for private buckets.
+
+- **The full file migration lifecycle works end to end.** `mirror` uploads to
+  cloud and keeps local copies. `redirect` replaces local files with
+  `.redirect.yaml` pointers (verifies remote exists first, won't delete data).
+  `restore` downloads back from cloud. `clean` removes pointers when you're sure.
+  `status` shows where you are. Three states, zero data loss risk.
+
+- **Your brain now enforces its own graph integrity.** The Iron Law of Back-Linking
+  is mandatory across all skills. Every mention of a person or company creates
+  a bidirectional link. This transforms your brain from a flat file store into a
+  traversable knowledge graph.
+
+- **Filing rules prevent the #1 brain mistake.** New `skills/_brain-filing-rules.md`
+  stops the most common error: dumping everything into `sources/`. File by primary
+  subject, not format. Includes notability gate and citation requirements.
+
+- **Enrichment protocol that actually works.** Rewritten from a 46-line API list to
+  a 7-step pipeline with 3-tier system, person/company page templates, pluggable
+  data sources, validation rules, and bulk enrichment safety.
+
+- **Ingest handles everything.** Articles, videos, podcasts, PDFs, screenshots,
+  meeting transcripts, social media. Each with a workflow that uses real gbrain
+  commands (`upload-raw`, `signed-url`) instead of theoretical patterns.
+
+- **Citation requirements across all skills.** Every fact needs inline
+  `[Source: ...]` citations. Three formats, source precedence hierarchy.
+
+- **Maintain skill catches what you missed.** Back-link enforcement, citation audit,
+  filing violations, file storage health checks, benchmark testing.
+
+- **Voice calls don't crash on em dashes anymore.** Unicode sanitization for Twilio
+  WebSocket, PII scrub, identity-first prompt, DIY STT+LLM+TTS pipeline option,
+  Smart VAD default, auto-upload call audio via `gbrain files upload-raw`.
+
+- **X-to-Brain gets eyes.** Image OCR, Filtered Stream real-time monitoring,
+  6-dimension tweet rating rubric, outbound tweet monitoring, cron staggering.
+
+- **Share brain pages without exposing the brain.** `gbrain publish` generates
+  beautiful, self-contained HTML from any brain page. Strips private data
+  (frontmatter, citations, confirmations, brain links, timeline) automatically.
+  Optional AES-256-GCM password gate with client-side decryption, no server
+  needed. Dark/light mode, mobile-optimized typography. This is the first
+  code+skill pair: deterministic code does the work, the skill tells the agent
+  when and how. See the [Thin Harness, Fat Skills](https://x.com/garrytan/status/2042925773300908103)
+  thread for the architecture philosophy.
+
+### Changed
+
+- **Supabase Storage** now auto-selects upload method by file size: standard POST
+  for < 100 MB, TUS resumable for >= 100 MB. Signed URL generation for private
+  bucket access (1-hour expiry).
+- **File resolver** supports both `.redirect.yaml` (v0.9+) and legacy `.redirect`
+  (v0.8) formats for backward compatibility.
+- **Redirect format** upgraded from `.redirect` (5 fields) to `.redirect.yaml`
+  (10 fields: target, bucket, storage_path, size, size_human, hash, mime,
+  uploaded, source_url, type).
+- **All skills** updated to reference actual `gbrain files` commands instead of
+  theoretical patterns.
+- **Back-link enforcer closes the loop.** `gbrain check-backlinks check` scans your
+  brain for entity mentions without back-links. `gbrain check-backlinks fix` creates
+  them. The Iron Law of Back-Linking is in every skill, now the code enforces it.
+
+- **Page linter catches LLM slop.** `gbrain lint` flags "Of course! Here is..."
+  preambles, wrapping code fences, placeholder dates, missing frontmatter, broken
+  citations, and empty sections. `gbrain lint --fix` auto-strips the fixable ones.
+  Every brain that uses AI for ingestion accumulates this. Now it's one command.
+
+- **Audit trail for everything.** `gbrain report --type enrichment-sweep` saves
+  timestamped reports to `brain/reports/{type}/YYYY-MM-DD-HHMM.md`. The maintain
+  skill references this for enrichment sweeps, meeting syncs, and maintenance runs.
+
+- **Publish skill** added to manifest (8th skill). First code+skill pair.
+- Skills version bumped to 0.9.0.
+- 67 new unit tests across publish, backlinks, lint, and report. Total: 409 pass.
 
 ## [0.8.0] - 2026-04-11
 
