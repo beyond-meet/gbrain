@@ -187,16 +187,20 @@ The repo is the system of record. GBrain is the retrieval layer. The agent reads
 
 The numbers above aren't theoretical. They come from a real deployment documented in [GBRAIN_SKILLPACK.md](docs/GBRAIN_SKILLPACK.md) — a reference architecture for how a production AI agent uses gbrain as its knowledge backbone.
 
-**Read the skillpack.** It's the most important doc in this repo. It tells your agent HOW to use gbrain, not just what commands exist:
+**GBrain ships 24 skills** organized by `skills/RESOLVER.md`. The resolver tells your agent which skill to read for any task. Skills are fat markdown files that encode battle-tested operational patterns from a production deployment with 14,700+ brain pages.
 
-- **The brain-agent loop** — the read-write cycle that makes knowledge compound
-- **Entity detection** — spawn on every message, capture people/companies/original ideas
-- **Enrichment pipeline** — 7-step protocol with tiered API spend
-- **Meeting ingestion** — transcript to brain pages with entity propagation
-- **Source attribution** — every fact traceable to where it came from
-- **Reference cron schedule** — 20+ recurring jobs that keep the brain alive
+**Core skills:**
+- **Signal detector** — fires on every message, captures ideas + entities in parallel
+- **Brain-ops** — brain-first lookup, read-enrich-write loop, source attribution
+- **Idea/media/meeting ingestion** — links, video, transcripts into brain pages with entity cross-linking
+- **Enrichment** — tiered person/company enrichment (Tier 1/2/3)
+- **Soul-audit** — interactive interview that generates your agent's identity and access policy
+- **Cron scheduler** — staggered jobs with quiet hours and wake-up override
+- **Cross-modal review** — quality gate via second model with refusal routing
 
-Without the skillpack, your agent has tools but no playbook. With it, the agent knows when to read, when to write, how to enrich, and how to keep the brain alive autonomously. It's a pattern book, not a tutorial. "Here's what works, here's why."
+**Conventions** in `skills/conventions/` define cross-cutting rules: quality standards, brain-first lookup protocol, model routing, and test-before-bulk discipline.
+
+Without these skills, your agent has tools but no playbook. With them, the agent knows when to read, when to write, how to enrich, and how to keep the brain alive autonomously.
 
 ## How gbrain fits with OpenClaw/Hermes
 

@@ -45,6 +45,19 @@
 
 **Depends on:** `gbrain serve --http` (not yet implemented).
 
+### Runtime MCP access control
+**What:** Add sender identity checking to MCP operations. Brain ops return filtered data based on access tier (Full/Work/Family/None).
+
+**Why:** ACCESS_POLICY.md is prompt-layer enforcement (agent reads policy before responding). A direct MCP caller can bypass it. Runtime enforcement in the MCP server is the real security boundary for multi-user and remote deployments.
+
+**Pros:** Real security boundary. ACCESS_POLICY.md becomes enforceable, not advisory.
+
+**Cons:** Requires adding `sender_id` or `access_tier` to `OperationContext`. Each mutating operation needs a permission check. Medium implementation effort.
+
+**Context:** From CEO review + Codex outside voice (2026-04-13). Prompt-layer access control works in practice (same model as Wintermute) but is not sufficient for remote MCP where direct tool calls bypass the agent's prompt.
+
+**Depends on:** v0.10.0 GStackBrain skill layer (shipped).
+
 ## P1 (new from v0.7.0)
 
 ### Constrained health_check DSL for third-party recipes
