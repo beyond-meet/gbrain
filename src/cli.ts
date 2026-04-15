@@ -18,7 +18,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'jobs']);
 
 async function main() {
   const args = process.argv.slice(2);
@@ -347,6 +347,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runEvalCommand(engine, args);
         break;
       }
+      case 'jobs': {
+        const { runJobs } = await import('./commands/jobs.ts');
+        await runJobs(engine, args);
+        break;
+      }
     }
   } finally {
     if (command !== 'serve') await engine.disconnect();
@@ -447,6 +452,16 @@ TOOLS
   check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain
   lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter
   report --type <name> --content ... Save timestamped report to brain/reports/
+
+JOBS (Minions)
+  jobs submit <name> [--params JSON]  Submit background job [--follow] [--dry-run]
+  jobs list [--status S] [--limit N]  List jobs
+  jobs get <id>                       Job details + history
+  jobs cancel <id>                    Cancel job
+  jobs retry <id>                     Re-queue failed/dead job
+  jobs prune [--older-than 30d]       Clean old jobs
+  jobs stats                          Job health dashboard
+  jobs work [--queue Q]               Start worker daemon (Postgres only)
 
 ADMIN
   stats                              Brain statistics

@@ -650,6 +650,118 @@ const file_url: Operation = {
   },
 };
 
+// --- Jobs (Minions) ---
+
+const submit_job: Operation = {
+  name: 'submit_job',
+  description: 'Submit a background job to the Minions queue',
+  params: {
+    name: { type: 'string', required: true, description: 'Job type (sync, embed, lint, import)' },
+    data: { type: 'object', description: 'Job payload (JSON)' },
+    queue: { type: 'string', description: 'Queue name (default: "default")' },
+    priority: { type: 'number', description: 'Priority (0 = highest, default: 0)' },
+    max_attempts: { type: 'number', description: 'Max retry attempts (default: 3)' },
+    delay: { type: 'number', description: 'Delay in ms before eligible' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    if (ctx.dryRun) return { dry_run: true, action: 'submit_job', name: p.name };
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    return queue.add(p.name as string, (p.data as Record<string, unknown>) || {}, {
+      queue: (p.queue as string) || 'default',
+      priority: (p.priority as number) || 0,
+      max_attempts: (p.max_attempts as number) || 3,
+      delay: (p.delay as number) || undefined,
+    });
+  },
+};
+
+const get_job: Operation = {
+  name: 'get_job',
+  description: 'Get job status and details by ID',
+  params: {
+    id: { type: 'number', required: true, description: 'Job ID' },
+  },
+  handler: async (ctx, p) => {
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    const job = await queue.getJob(p.id as number);
+    if (!job) throw new OperationError('invalid_params', `Job not found: ${p.id}`);
+    return job;
+  },
+};
+
+const list_jobs: Operation = {
+  name: 'list_jobs',
+  description: 'List jobs with optional filters',
+  params: {
+    status: { type: 'string', description: 'Filter by status (waiting, active, completed, failed, delayed, dead, cancelled)' },
+    queue: { type: 'string', description: 'Filter by queue name' },
+    name: { type: 'string', description: 'Filter by job type' },
+    limit: { type: 'number', description: 'Max results (default: 50)' },
+  },
+  handler: async (ctx, p) => {
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    return queue.getJobs({
+      status: p.status as string | undefined,
+      queue: p.queue as string | undefined,
+      name: p.name as string | undefined,
+      limit: (p.limit as number) || 50,
+    } as Parameters<typeof queue.getJobs>[0]);
+  },
+};
+
+const cancel_job: Operation = {
+  name: 'cancel_job',
+  description: 'Cancel a waiting, active, or delayed job',
+  params: {
+    id: { type: 'number', required: true, description: 'Job ID' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    if (ctx.dryRun) return { dry_run: true, action: 'cancel_job', id: p.id };
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    const cancelled = await queue.cancelJob(p.id as number);
+    if (!cancelled) throw new OperationError('invalid_params', `Cannot cancel job ${p.id} (may already be in terminal status)`);
+    return cancelled;
+  },
+};
+
+const retry_job: Operation = {
+  name: 'retry_job',
+  description: 'Re-queue a failed or dead job for retry',
+  params: {
+    id: { type: 'number', required: true, description: 'Job ID' },
+  },
+  mutating: true,
+  handler: async (ctx, p) => {
+    if (ctx.dryRun) return { dry_run: true, action: 'retry_job', id: p.id };
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    const retried = await queue.retryJob(p.id as number);
+    if (!retried) throw new OperationError('invalid_params', `Cannot retry job ${p.id} (must be failed or dead)`);
+    return retried;
+  },
+};
+
+const get_job_progress: Operation = {
+  name: 'get_job_progress',
+  description: 'Get structured progress for a running job',
+  params: {
+    id: { type: 'number', required: true, description: 'Job ID' },
+  },
+  handler: async (ctx, p) => {
+    const { MinionQueue } = await import('./minions/queue.ts');
+    const queue = new MinionQueue(ctx.engine);
+    const job = await queue.getJob(p.id as number);
+    if (!job) throw new OperationError('invalid_params', `Job not found: ${p.id}`);
+    return { id: job.id, name: job.name, status: job.status, progress: job.progress };
+  },
+};
+
 // --- Exports ---
 
 export const operations: Operation[] = [
@@ -675,6 +787,8 @@ export const operations: Operation[] = [
   log_ingest, get_ingest_log,
   // Files
   file_list, file_upload, file_url,
+  // Jobs (Minions)
+  submit_job, get_job, list_jobs, cancel_job, retry_job, get_job_progress,
 ];
 
 export const operationsByName = Object.fromEntries(
